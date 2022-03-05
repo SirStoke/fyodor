@@ -20,9 +20,9 @@ impl Entry {
     ///   - The number of bytes used by the key size
     /// respectively
     fn key_len(&self) -> (u32, usize) {
-        let unbounded_slice = &self.data;
+        let data_slice = &self.data;
 
-        u32::decode_var(unbounded_slice).unwrap()
+        u32::decode_var(data_slice).unwrap()
     }
 
     /// Returns a slice pointing to
@@ -32,7 +32,20 @@ impl Entry {
         &self.data[varint_size..(key_size as usize) + 1]
     }
 
-    /// Creates an Entry, writing it into the memory block pointed by `page_entry.
+    fn value_len(&self) -> (u32, usize) {
+        let (key_size, key_varint_size) = self.key_len();
+
+        u32::decode_var(&self.data[key_size as usize + key_varint_size..]).unwrap()
+    }
+
+    fn value(&self) -> &[u8] {
+        let (key_size, key_varint_size) = self.key_len();
+        let (_, value_varint_size) = self.value_len();
+
+        &self.data[key_varint_size + key_size as usize + value_varint_size..]
+    }
+
+    /// Creates an Entry, writing it into the memory block pointed by `page_entry`.
     /// Expects `page_entry` to have enough space
     pub fn create(size: usize, page_entry: *mut u8, key: &[u8], value: &[u8]) -> *const Entry {
         unsafe {
@@ -65,6 +78,7 @@ mod tests {
             let entry = Entry::create(10, page.as_mut_ptr(), &key, &value);
 
             assert_eq!(entry.as_ref().unwrap().key(), key);
+            assert_eq!(entry.as_ref().unwrap().value(), value);
         }
     }
 }
