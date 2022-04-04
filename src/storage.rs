@@ -18,11 +18,17 @@ impl Entry {
     /// Returns:
     ///   - The number of bytes used by the key
     ///   - The number of bytes used by the key size
+    /// respectively, given a slice which contains an Entry
+    fn key_len_from_slice(data: &[u8]) -> (u32, usize) {
+        u32::decode_var(data).unwrap()
+    }
+
+    /// Returns:
+    ///   - The number of bytes used by the key
+    ///   - The number of bytes used by the key size
     /// respectively
     fn key_len(&self) -> (u32, usize) {
-        let data_slice = &self.data;
-
-        u32::decode_var(data_slice).unwrap()
+        Entry::key_len_from_slice(&self.data)
     }
 
     /// Returns a slice containing the key
@@ -35,10 +41,22 @@ impl Entry {
         &self.data[index..index + (key_size as usize)]
     }
 
-    fn value_len(&self) -> (u32, usize) {
-        let (_, key_varint_size) = self.key_len();
+    /// Returns:
+    ///   - The number of bytes used by the value
+    ///   - The number of bytes used by the value size
+    /// respectively, given a slice which contains an Entry
+    fn value_len_from_slice(data: &[u8]) -> (u32, usize) {
+        let (_, key_varint_size) = Entry::key_len_from_slice(data);
 
-        u32::decode_var(&self.data[key_varint_size..]).unwrap()
+        u32::decode_var(&data[key_varint_size..]).unwrap()
+    }
+
+    /// Returns:
+    ///   - The number of bytes used by the value
+    ///   - The number of bytes used by the value size
+    /// respectively
+    fn value_len(&self) -> (u32, usize) {
+        Entry::value_len_from_slice(&self.data)
     }
 
     fn value(&self) -> &[u8] {
@@ -51,11 +69,15 @@ impl Entry {
     }
 
     /// Returns the total number of bytes occupied by this entry
-    fn len(&self) -> (u32) {
-        let (key_size, key_varint_size) = self.key_len();
-        let (value_size, value_varint_size) = self.value_len();
+    fn len(&self) -> u32 {
+        Entry::len_from_slice(&self.data)
+    }
 
-        return key_size + key_varint_size as u32 + value_size + value_varint_size as u32;
+    fn len_from_slice(data: &[u8]) -> u32 {
+        let (key_size, key_varint_size) = Entry::key_len_from_slice(&data);
+        let (value_size, value_varint_size) = Entry::value_len_from_slice(&data);
+
+        key_varint_size as u32 + value_varint_size as u32 + key_size + value_size
     }
 
     /// Creates an Entry, writing it into the memory block pointed by `page_entry`.
@@ -82,14 +104,14 @@ mod tests {
     use crate::storage::Entry;
 
     #[test]
-    fn create_writes_correctly() {
+    fn create_then_read_is_consistent() {
         unsafe {
-            let mut page = [0 as u8; 11];
+            let mut block = [0 as u8; 11];
 
             let key: [u8; 5] = [0, 1, 2, 3, 4];
             let value: [u8; 4] = [5, 6, 7, 8];
 
-            let entry = Entry::create(11, page.as_mut_ptr(), &key, &value);
+            let entry = Entry::create(11, block.as_mut_ptr(), &key, &value);
 
             assert_eq!(entry.as_ref().unwrap().key_len(), (5, 1));
             assert_eq!(entry.as_ref().unwrap().value_len(), (4, 1));
