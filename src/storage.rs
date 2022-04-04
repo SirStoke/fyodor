@@ -1,5 +1,6 @@
 use integer_encoding::*;
 use std::{mem, slice};
+use std::ops::Index;
 
 /// Represents an entry (key + value) in the LSM-tree
 ///
@@ -95,6 +96,67 @@ impl Entry {
             (*page_entry_slice)[value_index..value_index + value.len()].copy_from_slice(value);
 
             mem::transmute::<*mut [u8], *const Entry>(page_entry_slice)
+        }
+    }
+}
+
+/// An entries container
+///
+/// You can think of this as the equivalent of an SST Block in the RocksDB realm.
+/// Currently, a Block is an array of [Entry] and an u32 representing the size of the array
+#[repr(C)]
+pub struct Block {
+    pub size: u32,
+    data: [u8]
+}
+
+impl Index<u32> for Block {
+    type Output = Entry;
+
+    fn index(&self, index: u32) -> &Self::Output {
+        match self.into_iter().nth(index as usize) {
+            Some(entry) => entry,
+            _ => panic!("Tried to read out of bounds index {}", index),
+        }
+    }
+}
+
+pub struct BlockIterator<'a> {
+    idx: u32,
+    offset: u32,
+    block: &'a Block
+}
+
+impl<'a> Iterator for BlockIterator<'a> {
+    type Item = &'a Entry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        unsafe {
+            if self.idx >= self.block.size {
+                None
+            } else {
+                let data = &self.block.data;
+
+                let entry = mem::transmute::<*const [u8], *const Entry>(&data[self.offset as usize..]).as_ref().unwrap();
+
+                self.offset += entry.len();
+                self.idx += 1;
+
+                Some(entry)
+            }
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a Block {
+    type Item = &'a Entry;
+    type IntoIter = BlockIterator<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        BlockIterator {
+            idx: 0,
+            offset: 0,
+            block: self
         }
     }
 }
