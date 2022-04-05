@@ -1,6 +1,7 @@
 use integer_encoding::*;
 use std::{mem, slice};
 use std::ops::Index;
+use thiserror::Error;
 
 /// Represents an entry (key + value) in the LSM-tree
 ///
@@ -83,31 +84,59 @@ impl Entry {
 
     /// Creates an Entry, writing it into the memory block pointed by `page_entry`.
     /// Expects `page_entry` to have enough space
-    pub fn create(size: usize, page_entry: *mut u8, key: &[u8], value: &[u8]) -> *const Entry {
+    pub fn create(block_entry: &mut [u8], key: &[u8], value: &[u8]) -> *const Entry {
         unsafe {
-            let page_entry_slice = slice::from_raw_parts_mut(page_entry, size);
             let key_len = key.len();
-            let key_size = key_len.encode_var(&mut *page_entry_slice);
-            let value_size = value.len().encode_var((*page_entry_slice)[key_size..].as_mut());
+            let key_size = key_len.encode_var(block_entry);
+            let value_size = value.len().encode_var(block_entry[key_size..].as_mut());
 
-            (*page_entry_slice)[key_size + value_size..key_size + value_size + key_len].copy_from_slice(key);
+            block_entry[key_size + value_size..key_size + value_size + key_len].copy_from_slice(key);
 
             let value_index = key_size + value_size + key_len;
-            (*page_entry_slice)[value_index..value_index + value.len()].copy_from_slice(value);
+            block_entry[value_index..value_index + value.len()].copy_from_slice(value);
 
-            mem::transmute::<*mut [u8], *const Entry>(page_entry_slice)
+            mem::transmute::<&mut [u8], *const Entry>(block_entry)
         }
     }
 }
 
+#[derive(Error, Debug)]
+pub enum BlockError {
+    #[error("Trying to insert an Entry in a full Block")]
+    FullBlock
+}
+
 /// An entries container
 ///
+/// A Block is an array of [Entry], an u32 representing the size of the array, and a u32 representing
+/// the number of bytes currently occupied by entries (i.e. the offset the next entry will be written into).
+///
 /// You can think of this as the equivalent of an SST Block in the RocksDB realm.
-/// Currently, a Block is an array of [Entry] and an u32 representing the size of the array
 #[repr(C)]
 pub struct Block {
-    pub size: u32,
+    size: u32,
+    offset: u32,
     data: [u8]
+}
+
+impl Block {
+    fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<*const Entry, BlockError> {
+        let key_len = key.len();
+        let value_len = value.len();
+
+        let key_varint_size = key.len().required_space();
+        let value_varint_size = key.len().required_space();
+
+        let offset_index = self.offset as usize;
+        let remaining_space = self.data.len() - offset_index;
+        let entry_size = key_varint_size + value_varint_size + key_len + value_len;
+
+        if entry_size > remaining_space {
+            Err(BlockError::FullBlock)?
+        }
+
+        Ok(Entry::create(self.data[offset_index..entry_size].as_mut(), key, value))
+    }
 }
 
 impl Index<u32> for Block {
