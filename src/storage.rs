@@ -1,5 +1,5 @@
 use integer_encoding::*;
-use std::{mem, slice};
+use std::mem;
 use std::ops::Index;
 use thiserror::Error;
 
@@ -13,7 +13,7 @@ use thiserror::Error;
 /// where key_size and value_size are varints
 #[repr(C)]
 pub struct Entry {
-    data: [u8]
+    data: [u8],
 }
 
 impl Entry {
@@ -90,7 +90,8 @@ impl Entry {
             let key_size = key_len.encode_var(block_entry);
             let value_size = value.len().encode_var(block_entry[key_size..].as_mut());
 
-            block_entry[key_size + value_size..key_size + value_size + key_len].copy_from_slice(key);
+            block_entry[key_size + value_size..key_size + value_size + key_len]
+                .copy_from_slice(key);
 
             let value_index = key_size + value_size + key_len;
             block_entry[value_index..value_index + value.len()].copy_from_slice(value);
@@ -103,7 +104,7 @@ impl Entry {
 #[derive(Error, Debug)]
 pub enum BlockError {
     #[error("Trying to insert an Entry in a full Block")]
-    FullBlock
+    FullBlock,
 }
 
 /// An entries container
@@ -116,10 +117,11 @@ pub enum BlockError {
 pub struct Block {
     size: u32,
     offset: u32,
-    data: [u8]
+    data: [u8],
 }
 
 impl Block {
+    /// Inserts a new entry into this block
     fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<*const Entry, BlockError> {
         let key_len = key.len();
         let value_len = value.len();
@@ -135,7 +137,23 @@ impl Block {
             Err(BlockError::FullBlock)?
         }
 
-        Ok(Entry::create(self.data[offset_index..entry_size].as_mut(), key, value))
+        Ok(Entry::create(
+            self.data[offset_index..entry_size].as_mut(),
+            key,
+            value,
+        ))
+    }
+
+    /// Creates a new Block from a slice, ideally pointing to an mmap-ed region of memory
+    fn new(block: *mut [u8]) -> *mut Block {
+        unsafe {
+            let block = mem::transmute::<*mut [u8], *mut Block>(block);
+
+            (*block).size = 0;
+            (*block).offset = 0;
+
+            block
+        }
     }
 }
 
@@ -153,7 +171,7 @@ impl Index<u32> for Block {
 pub struct BlockIterator<'a> {
     idx: u32,
     offset: u32,
-    block: &'a Block
+    block: &'a Block,
 }
 
 impl<'a> Iterator for BlockIterator<'a> {
@@ -166,7 +184,10 @@ impl<'a> Iterator for BlockIterator<'a> {
             } else {
                 let data = &self.block.data;
 
-                let entry = mem::transmute::<*const [u8], *const Entry>(&data[self.offset as usize..]).as_ref().unwrap();
+                let entry =
+                    mem::transmute::<*const [u8], *const Entry>(&data[self.offset as usize..])
+                        .as_ref()
+                        .unwrap();
 
                 self.offset += entry.len();
                 self.idx += 1;
@@ -185,14 +206,14 @@ impl<'a> IntoIterator for &'a Block {
         BlockIterator {
             idx: 0,
             offset: 0,
-            block: self
+            block: self,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::Entry;
+    use crate::storage::{Block, Entry};
 
     #[test]
     fn create_then_read_is_consistent() {
@@ -202,12 +223,45 @@ mod tests {
             let key: [u8; 5] = [0, 1, 2, 3, 4];
             let value: [u8; 4] = [5, 6, 7, 8];
 
-            let entry = Entry::create(11, block.as_mut_ptr(), &key, &value);
+            let entry = Entry::create(block.as_mut(), &key, &value);
 
             assert_eq!(entry.as_ref().unwrap().key_len(), (5, 1));
             assert_eq!(entry.as_ref().unwrap().value_len(), (4, 1));
             assert_eq!(entry.as_ref().unwrap().key(), key);
             assert_eq!(entry.as_ref().unwrap().value(), value);
+        }
+    }
+
+    #[test]
+    fn iterator_works() {
+        let block = unsafe { &mut *Block::new(&mut [0 as u8, 55] as *mut [u8]) };
+
+        let key_suffix = [0, 1, 2, 3];
+        let value_suffix = [5, 6, 7];
+
+        let entries = (0..5).map(|n| -> *const Entry {
+            let mut key = vec![n];
+            key.extend_from_slice(&key_suffix);
+
+            let mut value = vec![n];
+            value.extend_from_slice(&value_suffix);
+
+            block.insert(&key, &value).unwrap()
+        });
+
+        let mut expected_prefix = 0;
+
+        for entry in block.into_iter() {
+            let mut expected_key = vec![expected_prefix];
+            expected_key.extend_from_slice(&key_suffix);
+
+            let mut expected_value = vec![expected_prefix];
+            expected_value.extend_from_slice(&value_suffix);
+
+            assert_eq!(entry.key(), expected_key.as_slice());
+            assert_eq!(entry.value(), expected_value.as_slice());
+
+            expected_prefix += 1;
         }
     }
 }
