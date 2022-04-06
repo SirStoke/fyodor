@@ -137,8 +137,10 @@ impl Block {
             Err(BlockError::FullBlock)?
         }
 
+        self.offset += entry_size as u32;
+
         Ok(Entry::create(
-            self.data[offset_index..entry_size].as_mut(),
+            self.data[offset_index..offset_index + entry_size].as_mut(),
             key,
             value,
         ))
@@ -147,12 +149,12 @@ impl Block {
     /// Creates a new Block from a slice, ideally pointing to an mmap-ed region of memory
     fn new(block: *mut [u8]) -> *mut Block {
         unsafe {
-            let block = mem::transmute::<*mut [u8], *mut Block>(block);
+            let new_block = mem::transmute::<*mut [u8], *mut Block>(block);
 
-            (*block).size = 0;
-            (*block).offset = 0;
+            (*new_block).size = 0;
+            (*new_block).offset = 0;
 
-            block
+            new_block
         }
     }
 }
@@ -234,20 +236,22 @@ mod tests {
 
     #[test]
     fn iterator_works() {
-        let block = unsafe { &mut *Block::new(&mut [0 as u8, 55] as *mut [u8]) };
+        // 55 for the entries + 8 for the idx + offset
+        let mut block_slice = [0 as u8; 55 + 8];
+        let block = unsafe { &mut *Block::new(&mut block_slice as *mut [u8]) };
 
         let key_suffix = [0, 1, 2, 3];
         let value_suffix = [5, 6, 7];
 
-        let entries = (0..5).map(|n| -> *const Entry {
+        for n in 0..5 {
             let mut key = vec![n];
             key.extend_from_slice(&key_suffix);
 
             let mut value = vec![n];
             value.extend_from_slice(&value_suffix);
 
-            block.insert(&key, &value).unwrap()
-        });
+            block.insert(&key, &value).unwrap();
+        }
 
         let mut expected_prefix = 0;
 
