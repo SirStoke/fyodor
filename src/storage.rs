@@ -107,10 +107,20 @@ pub enum BlockError {
     FullBlock,
 }
 
-/// An entries container
+/// Frequency after which to save index snapshot to help binary searching
+const SNAPSHOT_FREQUENCY: u32 = 10;
+
+/// An [Entry] container
 ///
-/// A Block is an array of [Entry], an u32 representing the size of the array, and a u32 representing
-/// the number of bytes currently occupied by entries (i.e. the offset the next entry will be written into).
+/// A Block contains an u32 representing the size of the array, a u32 representing
+/// the number of bytes currently occupied by entries (i.e. the offset the next entry will be written into),
+/// and a chunk of memory containing:
+///
+/// - Entries, saved from the start of the chunk downwards
+/// - Index snapshots, saved from the end of the chunk upwards
+///
+/// Index snapshots are entry offsets, saved every [SNAPSHOT_FREQUENCY], that are used by the binary
+/// search algorithm
 ///
 /// You can think of this as the equivalent of an SST Block in the RocksDB realm.
 #[repr(C)]
