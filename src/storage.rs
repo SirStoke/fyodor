@@ -1,5 +1,6 @@
 use integer_encoding::*;
 use std::mem;
+use std::mem::size_of;
 use std::ops::Index;
 use thiserror::Error;
 
@@ -107,7 +108,7 @@ pub enum BlockError {
     FullBlock,
 }
 
-/// Frequency after which to save index snapshot to help binary searching
+/// Frequency after which to save an index snapshot to help binary searching
 const SNAPSHOT_FREQUENCY: u32 = 10;
 
 /// An [Entry] container
@@ -131,8 +132,21 @@ pub struct Block {
 }
 
 impl Block {
-    /// Inserts a new entry into this block
-    fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<*const Entry, BlockError> {
+    /// Creates a new Block from a slice, ideally pointing to an mmap-ed region of memory
+    pub fn new(block: *mut [u8]) -> *mut Block {
+        unsafe {
+            let new_block = mem::transmute::<*mut [u8], *mut Block>(block);
+
+            (*new_block).size = 0;
+            (*new_block).offset = 0;
+
+            new_block
+        }
+    }
+
+    /// Inserts a new entry into this block. Expects to be called in the right order, i.e.
+    /// an earlier call must insert a key <= then a later call
+    pub fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<*const Entry, BlockError> {
         let key_len = key.len();
         let value_len = value.len();
 
@@ -147,6 +161,12 @@ impl Block {
             Err(BlockError::FullBlock)?
         }
 
+        self.size += 1;
+
+        if self.size % SNAPSHOT_FREQUENCY == 0 {
+            self.save_offset_snapshot();
+        }
+
         self.offset += entry_size as u32;
 
         Ok(Entry::create(
@@ -156,16 +176,22 @@ impl Block {
         ))
     }
 
-    /// Creates a new Block from a slice, ideally pointing to an mmap-ed region of memory
-    fn new(block: *mut [u8]) -> *mut Block {
-        unsafe {
-            let new_block = mem::transmute::<*mut [u8], *mut Block>(block);
+    fn save_offset_snapshot(&mut self) {
+        let snapshot_index =
+            self.data.len() - (self.size as usize / SNAPSHOT_FREQUENCY as usize) * size_of::<u32>();
 
-            (*new_block).size = 0;
-            (*new_block).offset = 0;
+        self.data[snapshot_index..].copy_from_slice(&self.offset.to_le_bytes());
+    }
 
-            new_block
-        }
+    fn read_offset_snapshot(&self, index: usize) -> u32 {
+        let snapshot_index =
+            self.data.len() - (index * SNAPSHOT_FREQUENCY as usize * size_of::<u32>());
+
+        u32::from_le_bytes(
+            self.data[snapshot_index..snapshot_index + size_of::<u32>()]
+                .try_into()
+                .unwrap(),
+        )
     }
 }
 
@@ -225,7 +251,8 @@ impl<'a> IntoIterator for &'a Block {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{Block, Entry};
+    use crate::storage::{Block, Entry, SNAPSHOT_FREQUENCY};
+    use std::mem::size_of;
 
     #[test]
     fn create_then_read_is_consistent() {
@@ -276,6 +303,37 @@ mod tests {
             assert_eq!(entry.value(), expected_value.as_slice());
 
             expected_prefix += 1;
+        }
+    }
+
+    #[test]
+    fn offset_snapshots_created_ok() {
+        const SNAPSHOT_NUM: usize = 6;
+        const ENTRIES_NUM: usize = SNAPSHOT_FREQUENCY as usize * SNAPSHOT_NUM;
+        const ENTRIES_SIZE: usize = 11 * ENTRIES_NUM;
+        const SNAPSHOTS_SIZE: usize = SNAPSHOT_NUM * size_of::<u32>();
+
+        let mut block_slice = [0 as u8; ENTRIES_SIZE + SNAPSHOTS_SIZE];
+
+        let block = unsafe { &mut *Block::new(&mut block_slice as *mut [u8]) };
+
+        let key_suffix = [0, 1, 2, 3];
+        let value_suffix = [5, 6, 7];
+
+        for n in 0..ENTRIES_NUM as u8 {
+            let mut key = vec![n];
+            key.extend_from_slice(&key_suffix);
+
+            let mut value = vec![n];
+            value.extend_from_slice(&value_suffix);
+
+            block.insert(&key, &value).unwrap();
+        }
+
+        for n in 0..SNAPSHOT_NUM {
+            let offset = block.read_offset_snapshot(n);
+
+            assert_eq!(offset as usize, n * 11);
         }
     }
 }
