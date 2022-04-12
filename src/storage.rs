@@ -65,7 +65,7 @@ impl Entry {
     fn value(&self) -> &[u8] {
         let (key_size, key_varint_size) = self.key_len();
         let (value_size, value_varint_size) = self.value_len();
-        
+
         let value_index = key_varint_size + value_varint_size + key_size as usize;
 
         &self.data[value_index..value_index + value_size as usize]
@@ -180,12 +180,12 @@ impl Block {
         let snapshot_index =
             self.data.len() - (self.size as usize / SNAPSHOT_FREQUENCY as usize) * size_of::<u32>();
 
-        self.data[snapshot_index..].copy_from_slice(&self.offset.to_le_bytes());
+        self.data[snapshot_index..snapshot_index + size_of::<u32>()]
+            .copy_from_slice(&self.offset.to_le_bytes());
     }
 
     fn read_offset_snapshot(&self, index: usize) -> u32 {
-        let snapshot_index =
-            self.data.len() - (index * SNAPSHOT_FREQUENCY as usize * size_of::<u32>());
+        let snapshot_index = self.data.len() - (index + 1) * size_of::<u32>();
 
         u32::from_le_bytes(
             self.data[snapshot_index..snapshot_index + size_of::<u32>()]
@@ -330,10 +330,15 @@ mod tests {
             block.insert(&key, &value).unwrap();
         }
 
-        for n in 0..SNAPSHOT_NUM {
-            let offset = block.read_offset_snapshot(n);
+        for n in 1..SNAPSHOT_NUM + 1 {
+            let offset = block.read_offset_snapshot(n - 1);
 
-            assert_eq!(offset as usize, n * 11);
+            assert_eq!(
+                offset as usize,
+                (n * (SNAPSHOT_FREQUENCY as usize) - 1) * 11,
+                "asserting snapshot {}",
+                n
+            );
         }
     }
 }
