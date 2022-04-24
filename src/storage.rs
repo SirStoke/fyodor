@@ -1,4 +1,5 @@
 use integer_encoding::*;
+use std::cmp::Ordering;
 use std::mem;
 use std::mem::size_of;
 use std::ops::Index;
@@ -176,6 +177,7 @@ impl Block {
         ))
     }
 
+    /// Saves the current offset in the offset snapshot array
     fn save_offset_snapshot(&mut self) {
         let snapshot_index =
             self.data.len() - (self.size as usize / SNAPSHOT_FREQUENCY as usize) * size_of::<u32>();
@@ -184,6 +186,7 @@ impl Block {
             .copy_from_slice(&self.offset.to_le_bytes());
     }
 
+    /// Retrieves the offset at the provided index from the offset snapshot array
     fn read_offset_snapshot(&self, index: usize) -> u32 {
         let snapshot_index = self.data.len() - (index + 1) * size_of::<u32>();
 
@@ -192,6 +195,50 @@ impl Block {
                 .try_into()
                 .unwrap(),
         )
+    }
+
+    /// Reads an entry at the provided offset
+    ///
+    /// Unsafe because the caller must make sure that the offset is pointing at the beginning of
+    /// a valid entry
+    unsafe fn get_at_offset(&self, offset: u32) -> *const Entry {
+        mem::transmute::<&[u8], *const Entry>(&self.data[offset as usize..])
+    }
+
+    /// Binary searches the entries in the block, using the offset snapshots as aid, comparing
+    /// entries using the cmp function. It expects the searched value to actually be in the range of
+    /// this block
+    ///
+    /// Returns the closest snapshot offset which represents a smaller (or equal) entry
+    fn binary_search<T>(&self, cmp: T) -> u32
+    where
+        T: Fn(&[u8]) -> Ordering,
+    {
+        use Ordering::*;
+
+        let mut left = 0 as usize;
+        let mut right = self.size as usize / SNAPSHOT_FREQUENCY as usize;
+
+        while left < right {
+            let size = right - left;
+            let mid = left + size / 2;
+
+            let offset = self.read_offset_snapshot(mid);
+
+            // This is safe because the offsets come from the snapshots
+            let entry = unsafe { self.get_at_offset(offset) };
+            let order = unsafe { cmp((*entry).key()) };
+
+            if order == Greater {
+                right = mid;
+            } else if order == Less {
+                left = mid + 1;
+            } else {
+                return offset;
+            }
+        }
+
+        self.read_offset_snapshot(left - 1)
     }
 }
 
@@ -203,6 +250,18 @@ impl Index<u32> for Block {
             Some(entry) => entry,
             _ => panic!("Tried to read out of bounds index {}", index),
         }
+    }
+}
+
+/// Defines the ordering between the keys
+pub trait EntryOrd<Rhs = Self>
+where
+    Rhs: ?Sized,
+{
+    fn cmp(&self, other: &Rhs) -> Ordering;
+
+    fn lt(&self, other: &Rhs) -> bool {
+        self.cmp(other) == Ordering::Less
     }
 }
 
@@ -252,6 +311,8 @@ impl<'a> IntoIterator for &'a Block {
 #[cfg(test)]
 mod tests {
     use crate::storage::{Block, Entry, SNAPSHOT_FREQUENCY};
+    use core::array::TryFromSliceError;
+    use core::cmp::Ordering;
     use std::mem::size_of;
 
     #[test]
@@ -282,6 +343,7 @@ mod tests {
 
         for n in 0..5 {
             let mut key = vec![n];
+
             key.extend_from_slice(&key_suffix);
 
             let mut value = vec![n];
@@ -340,5 +402,54 @@ mod tests {
                 n
             );
         }
+    }
+
+    #[test]
+    fn binary_search_ok() {
+        const SNAPSHOT_NUM: usize = 6;
+        const ENTRY_SIZE: usize = 11;
+        const ENTRIES_NUM: usize = SNAPSHOT_FREQUENCY as usize * SNAPSHOT_NUM;
+        const ENTRIES_SIZE: usize = ENTRY_SIZE * ENTRIES_NUM;
+        const SNAPSHOTS_SIZE: usize = SNAPSHOT_NUM * size_of::<u32>();
+
+        let mut block_slice = [0 as u8; ENTRIES_SIZE + SNAPSHOTS_SIZE];
+
+        let block = unsafe { &mut *Block::new(&mut block_slice as *mut [u8]) };
+
+        let key_prefix = [0, 1, 2, 3];
+        let value_suffix = [5, 6, 7];
+
+        for n in 0..ENTRIES_NUM as u8 {
+            let mut key = Vec::from(key_prefix);
+            key.push(n);
+
+            let mut value = vec![n];
+            value.extend_from_slice(&value_suffix);
+
+            block.insert(&key, &value).unwrap();
+        }
+
+        let needle_entry_num = 39;
+
+        let mut needle = Vec::from(key_prefix);
+        needle.push(needle_entry_num);
+
+        // The needle must be 8 bytes long to be converted to an u64 below
+        needle.extend_from_slice(&[0 as u8; 3]);
+
+        let res: Result<[u8; 8], TryFromSliceError> = needle.as_slice().try_into();
+        let needle_int = u64::from_be_bytes(res.unwrap());
+
+        let offset = block.binary_search(|key: &[u8]| -> Ordering {
+            let mut key_int_bytes = Vec::from(key);
+
+            key_int_bytes.extend_from_slice(&vec![0; 8 - key_int_bytes.len()]);
+
+            let key_int = u64::from_be_bytes(key_int_bytes.try_into().unwrap());
+
+            key_int.cmp(&needle_int)
+        });
+
+        assert_eq!(offset, needle_entry_num as u32 * ENTRY_SIZE as u32);
     }
 }
