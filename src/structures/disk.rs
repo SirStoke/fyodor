@@ -310,7 +310,7 @@ impl<'a> IntoIterator for &'a Block {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{Block, Entry, SNAPSHOT_FREQUENCY};
+    use crate::structures::disk::*;
     use core::array::TryFromSliceError;
     use core::cmp::Ordering;
     use std::mem::size_of;
