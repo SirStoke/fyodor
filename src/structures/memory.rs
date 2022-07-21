@@ -2,6 +2,7 @@ use rand::Rng;
 use std::rc::Rc;
 
 /// A Skip List Node
+#[allow(dead_code)]
 pub struct Node<K, V> {
     prev: Vec<Rc<Node<K, V>>>,
     next: Vec<Rc<Node<K, V>>>,
@@ -14,12 +15,12 @@ struct FingerNode<K, V>(Option<Rc<Node<K, V>>>);
 
 impl<K, V> FingerNode<K, V> {
     #[inline]
-    pub fn some(node: Rc<Node<K, V>>) -> FingerNode<K, V> {
+    fn some(node: Rc<Node<K, V>>) -> FingerNode<K, V> {
         FingerNode(Some(node))
     }
 
     #[inline]
-    pub fn empty() -> FingerNode<K, V> {
+    fn empty() -> FingerNode<K, V> {
         FingerNode(None)
     }
 }
@@ -56,7 +57,7 @@ impl<K, V> Finger<K, V> {
     /// Returns a [Finger] that brackets the provided key. In case the key is already present, it
     /// returns the contents of that node. If the key is supposed to be before the first node,
     /// then prev is empty. If the key is supposed to be after the last node, then next is empty.
-    pub fn bracketing_finger(list: &Rc<Node<K, V>>, key: &K) -> Finger<K, V>
+    fn bracketing_finger(list: &Rc<Node<K, V>>, key: &K) -> Finger<K, V>
     where
         K: Ord + Clone,
         V: Clone,
@@ -83,7 +84,7 @@ impl<K, V> Finger<K, V> {
                 curr_order = node.key.cmp(key);
 
                 if curr_order == Equal {
-                    return Finger::from_node(&node);
+                    return Finger::from_node(node);
                 }
 
                 next_order = if let Some(next) = node.next.get(level) {
@@ -116,7 +117,8 @@ const MAX_HEIGHT: u8 = 12;
 
 impl<K, V> Node<K, V>
 where
-    K: Ord,
+    K: Ord + Clone,
+    V: Clone,
 {
     /// Creates a new unlinked node
     pub fn new(key: K, value: V) -> Node<K, V> {
@@ -129,17 +131,21 @@ where
     }
 
     /// Inserts a new entry in the list
-    pub fn insert(key: K, value: V, list: &mut Node<K, V>) -> Node<K, V> {
+    pub fn insert(key: K, value: V, list: Rc<Node<K, V>>) -> Node<K, V> {
         let node = Node::new(key, value);
         let mut rng = rand::thread_rng();
         let mut levels = 0;
 
         // Use 1/4th scaling
-        while rng.gen_range(1..4) == 1 as u8 && levels < MAX_HEIGHT {
+        while rng.gen_range(1..4) == 1_u8 && levels < MAX_HEIGHT {
             levels += 1;
         }
 
-        for level in levels..=0 {}
+        let finger = Finger::bracketing_finger(&list, &node.key);
+
+        println!("{:?}", finger.prev.len());
+
+        for _level in levels..=0 {}
 
         todo!()
     }

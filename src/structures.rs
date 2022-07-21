@@ -1,2 +1,2 @@
 mod disk;
-mod memory;
+pub mod memory;

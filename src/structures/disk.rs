@@ -78,8 +78,8 @@ impl Entry {
     }
 
     fn len_from_slice(data: &[u8]) -> u32 {
-        let (key_size, key_varint_size) = Entry::key_len_from_slice(&data);
-        let (value_size, value_varint_size) = Entry::value_len_from_slice(&data);
+        let (key_size, key_varint_size) = Entry::key_len_from_slice(data);
+        let (value_size, value_varint_size) = Entry::value_len_from_slice(data);
 
         key_varint_size as u32 + value_varint_size as u32 + key_size + value_size
     }
@@ -216,7 +216,7 @@ impl Block {
     {
         use Ordering::*;
 
-        let mut left = 0 as usize;
+        let mut left = 0_usize;
         let mut right = self.size as usize / SNAPSHOT_FREQUENCY as usize;
 
         while left < right {
@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn create_then_read_is_consistent() {
         unsafe {
-            let mut block = [0 as u8; 11];
+            let mut block = [0_u8; 11];
 
             let key: [u8; 5] = [0, 1, 2, 3, 4];
             let value: [u8; 4] = [5, 6, 7, 8];
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn iterator_works() {
         // 55 for the entries + 8 for the idx + offset
-        let mut block_slice = [0 as u8; 55 + 8];
+        let mut block_slice = [0_u8; 55 + 8];
         let block = unsafe { &mut *Block::new(&mut block_slice as *mut [u8]) };
 
         let key_suffix = [0, 1, 2, 3];
@@ -352,19 +352,15 @@ mod tests {
             block.insert(&key, &value).unwrap();
         }
 
-        let mut expected_prefix = 0;
-
-        for entry in block.into_iter() {
-            let mut expected_key = vec![expected_prefix];
+        for (expected_prefix, entry) in block.into_iter().enumerate() {
+            let mut expected_key = vec![expected_prefix as u8];
             expected_key.extend_from_slice(&key_suffix);
 
-            let mut expected_value = vec![expected_prefix];
+            let mut expected_value = vec![expected_prefix as u8];
             expected_value.extend_from_slice(&value_suffix);
 
             assert_eq!(entry.key(), expected_key.as_slice());
             assert_eq!(entry.value(), expected_value.as_slice());
-
-            expected_prefix += 1;
         }
     }
 
@@ -375,7 +371,7 @@ mod tests {
         const ENTRIES_SIZE: usize = 11 * ENTRIES_NUM;
         const SNAPSHOTS_SIZE: usize = SNAPSHOT_NUM * size_of::<u32>();
 
-        let mut block_slice = [0 as u8; ENTRIES_SIZE + SNAPSHOTS_SIZE];
+        let mut block_slice = [0_u8; ENTRIES_SIZE + SNAPSHOTS_SIZE];
 
         let block = unsafe { &mut *Block::new(&mut block_slice as *mut [u8]) };
 
@@ -412,7 +408,7 @@ mod tests {
         const ENTRIES_SIZE: usize = ENTRY_SIZE * ENTRIES_NUM;
         const SNAPSHOTS_SIZE: usize = SNAPSHOT_NUM * size_of::<u32>();
 
-        let mut block_slice = [0 as u8; ENTRIES_SIZE + SNAPSHOTS_SIZE];
+        let mut block_slice = [0_u8; ENTRIES_SIZE + SNAPSHOTS_SIZE];
 
         let block = unsafe { &mut *Block::new(&mut block_slice as *mut [u8]) };
 
@@ -435,7 +431,7 @@ mod tests {
         needle.push(needle_entry_num);
 
         // The needle must be 8 bytes long to be converted to an u64 below
-        needle.extend_from_slice(&[0 as u8; 3]);
+        needle.extend_from_slice(&[0_u8; 3]);
 
         let res: Result<[u8; 8], TryFromSliceError> = needle.as_slice().try_into();
         let needle_int = u64::from_be_bytes(res.unwrap());
