@@ -1,11 +1,12 @@
 use rand::Rng;
 use std::rc::Rc;
+use crossbeam::atomic::AtomicCell;
 
 /// A Skip List Node
 #[allow(dead_code)]
 pub struct Node<K, V> {
-    prev: Vec<Rc<Node<K, V>>>,
-    next: Vec<Rc<Node<K, V>>>,
+    prev: Vec<AtomicCell<Rc<Node<K, V>>>>,
+    next: Vec<AtomicCell<Rc<Node<K, V>>>>,
     key: K,
     value: V,
 }
@@ -47,8 +48,11 @@ impl<K, V> Finger<K, V> {
         let mut finger = Finger::empty(levels);
 
         for i in 0..levels {
-            finger.prev[i] = FingerNode::some(node.prev[i].clone());
-            finger.next[i] = FingerNode::some(node.next[i].clone());
+            // SAFETY: `as_ref()` invariants must all hold for this Node to be valid
+            unsafe {
+                finger.prev[i] = FingerNode(node.prev[i].as_ptr().as_ref().map(Rc::clone));
+                finger.next[i] = FingerNode(node.next[i].as_ptr().as_ref().map(Rc::clone));
+            }
         }
 
         finger
@@ -57,6 +61,11 @@ impl<K, V> Finger<K, V> {
     /// Returns a [Finger] that brackets the provided key. In case the key is already present, it
     /// returns the contents of that node. If the key is supposed to be before the first node,
     /// then prev is empty. If the key is supposed to be after the last node, then next is empty.
+    ///
+    /// SAFETY: there are many unsafe blocks in this function. They are valid because
+    /// data inside "Node" is actually never mutated (except, of course, the other AtomicCells), only
+    /// the pointer inside the AtomicCell is. In other words, all &Rc<Node<K, V>> actually alias to
+    /// immutable data, and the only data that mutates is a field inside the AtomicCell.
     fn bracketing_finger(list: &Rc<Node<K, V>>, key: &K) -> Finger<K, V>
     where
         K: Ord + Clone,
@@ -74,7 +83,7 @@ impl<K, V> Finger<K, V> {
             return finger;
         }
 
-        let mut node = list;
+        let mut node = list.clone();
 
         while level != 0 {
             let mut curr_order = Equal;
@@ -84,11 +93,12 @@ impl<K, V> Finger<K, V> {
                 curr_order = node.key.cmp(key);
 
                 if curr_order == Equal {
-                    return Finger::from_node(node);
+                    return Finger::from_node(node.as_ref());
                 }
 
                 next_order = if let Some(next) = node.next.get(level) {
-                    next.key.cmp(key)
+                    // SAFETY: data inside Node is never mutated (the AtomicCell's content is)
+                    unsafe { (*next.as_ptr()).clone().key.cmp(key) }
                 } else {
                     finger.prev[level] = FingerNode::some(node.clone());
                     finger.next[level] = FingerNode::empty();
@@ -96,15 +106,22 @@ impl<K, V> Finger<K, V> {
                     break;
                 };
 
+                // SAFETY: data inside Node is never mutated (the AtomicCell's content is)
+                let next_node = unsafe { (&*node.next[level].as_ptr()).clone() };
+
                 if next_order == Equal {
-                    return Finger::from_node(&node.next[level]);
+                    return Finger::from_node(next_node.as_ref());
                 }
 
-                node = &node.next[level];
+                node = next_node;
             }
 
             finger.next[level] = FingerNode::some(node.clone());
-            finger.prev[level] = FingerNode::some(node.prev[level].clone());
+
+            // SAFETY: data inside Node is never mutated (the AtomicCell's content is)
+            unsafe {
+                finger.prev[level] = FingerNode::some((*node.prev[level].as_ptr()).clone());
+            }
 
             level -= 1;
         }
@@ -148,5 +165,17 @@ where
         for _level in levels..=0 {}
 
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+    use crossbeam::atomic::AtomicCell;
+    use crate::structures::memory::Node;
+
+    #[test]
+    fn atomic_cell_doesnt_lock() {
+        assert!(AtomicCell::<Rc<Node<&str, &str>>>::is_lock_free());
     }
 }
