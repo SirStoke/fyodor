@@ -97,7 +97,7 @@ impl<K, V> Finger<K, V> {
                 }
 
                 next_order = if let Some(next) = node.next.get(level) {
-                    // SAFETY: data inside Node is never mutated (the AtomicCell's content is)
+                    // SAFETY: see the note above
                     unsafe { (*next.as_ptr()).clone().key.cmp(key) }
                 } else {
                     finger.prev[level] = FingerNode::some(node.clone());
@@ -106,7 +106,7 @@ impl<K, V> Finger<K, V> {
                     break;
                 };
 
-                // SAFETY: data inside Node is never mutated (the AtomicCell's content is)
+                // SAFETY: see the note above
                 let next_node = unsafe { (&*node.next[level].as_ptr()).clone() };
 
                 if next_order == Equal {
@@ -118,7 +118,7 @@ impl<K, V> Finger<K, V> {
 
             finger.next[level] = FingerNode::some(node.clone());
 
-            // SAFETY: data inside Node is never mutated (the AtomicCell's content is)
+            // SAFETY: see the note above
             unsafe {
                 finger.prev[level] = FingerNode::some((*node.prev[level].as_ptr()).clone());
             }
